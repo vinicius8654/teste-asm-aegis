@@ -138,22 +138,19 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-   <script>
+ <script>
+  // CONFIGURAÇÕES SUPABASE
   const SUPABASE_URL = "https://ckjxfvnojwfwxazajeae.supabase.co";
   const SUPABASE_ANON_KEY =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNranhmdm5vandmd3hhemFqZWFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NDA4NjQsImV4cCI6MjA3ODExNjg2NH0.K21N_9PaJBt3tr2su7ouUQ57xmrjz9dW_Iy2ohYWqp0";
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // ID único do dispositivo — fica salvo no navegador
-  let deviceId = localStorage.getItem("device_id");
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    localStorage.setItem("device_id", deviceId);
-  }
+  let mapa = null,
+      marcador = null,
+      primeiraLocalizacao = true;
 
-  let mapa, marcador, primeiraLocalizacao = true;
-
+  // Função para criar o mapa
   function criarMapa(lat, lon) {
     mapa = L.map("map").setView([lat, lon], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -161,7 +158,7 @@
     }).addTo(mapa);
     marcador = L.marker([lat, lon]).addTo(mapa);
 
-    // botão de centralizar
+    // Botão de centralizar 📍
     const btnCentralizar = L.control({ position: "bottomright" });
     btnCentralizar.onAdd = function () {
       const div = L.DomUtil.create("button", "centralizar-btn");
@@ -172,24 +169,54 @@
     btnCentralizar.addTo(mapa);
   }
 
+  // Atualiza posição no mapa
   function atualizarMapa(lat, lon) {
+    if (!mapa) return;
     marcador.setLatLng([lat, lon]);
     mapa.setView([lat, lon]);
   }
 
-  function atualizarInformacoes(lat, lon, timestamp) {
+  // Busca nome do local com base nas coordenadas
+  async function obterEndereco(lat, lon) {
+    try {
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`
+      );
+      const data = await resp.json();
+      return data.display_name || "Local não identificado";
+    } catch (e) {
+      console.error("Erro ao buscar endereço:", e);
+      return "Endereço indisponível";
+    }
+  }
+
+  // Atualiza informações na interface
+  async function atualizarInformacoes(lat, lon, timestamp) {
+    const endereco = await obterEndereco(lat, lon);
+
     document.getElementById("lat").textContent = lat.toFixed(6);
     document.getElementById("lon").textContent = lon.toFixed(6);
     document.getElementById("timestamp").textContent = new Date(timestamp).toLocaleString();
+
+    let localElement = document.getElementById("local");
+    if (!localElement) {
+      localElement = document.createElement("p");
+      localElement.innerHTML = `<strong>Local:</strong> <span id="local-nome">${endereco}</span>`;
+      document.querySelector(".info").appendChild(localElement);
+    } else {
+      document.getElementById("local-nome").textContent = endereco;
+    }
+
     const status = document.getElementById("status");
     status.textContent = "✅ Localização atualizada";
     status.classList.remove("loading");
   }
 
+  // Envia somente coordenadas para Supabase
   async function enviarParaSupabase(lat, lon, timestamp) {
     const { error } = await supabase.from("localizacoes").insert([
       {
-        dispositivo_id: deviceId,
+        dispositivo: "cliente",
         latitude: lat,
         longitude: lon,
         atualizado_em: timestamp,
@@ -198,11 +225,11 @@
     if (error) console.error("Erro Supabase:", error);
   }
 
+  // Carrega a última localização
   async function carregarUltimaLocalizacao() {
     const { data, error } = await supabase
       .from("localizacoes")
       .select("*")
-      .eq("dispositivo_id", deviceId)
       .order("atualizado_em", { ascending: false })
       .limit(1);
 
@@ -215,14 +242,16 @@
     }
   }
 
+  // Escuta atualizações em tempo real
   function subscribeRealtime() {
     supabase
-      .channel(`localizacoes-${deviceId}`)
+      .channel("localizacoes-changes")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "localizacoes", filter: `dispositivo_id=eq.${deviceId}` },
+        { event: "INSERT", schema: "public", table: "localizacoes" },
         (payload) => {
           const row = payload.new;
+          if (!mapa) criarMapa(row.latitude, row.longitude);
           atualizarMapa(row.latitude, row.longitude);
           atualizarInformacoes(row.latitude, row.longitude, row.atualizado_em);
         }
@@ -230,9 +259,11 @@
       .subscribe();
   }
 
+  // Rastreia posição do cliente
   function rastrearLocalizacao() {
     if (!navigator.geolocation) {
-      document.getElementById("status").textContent = "⚠️ Geolocalização não suportada.";
+      document.getElementById("status").textContent =
+        "⚠️ Geolocalização não suportada.";
       return;
     }
 
@@ -249,16 +280,17 @@
           atualizarMapa(lat, lon);
         }
 
-        atualizarInformacoes(lat, lon, timestamp);
+        await atualizarInformacoes(lat, lon, timestamp);
         await enviarParaSupabase(lat, lon, timestamp);
       },
       (err) => {
         document.getElementById("status").textContent = "❌ Erro: " + err.message;
       },
-      { enableHighAccuracy: false, maximumAge: 15000, timeout: 20000 }
+      { enableHighAccuracy: false, maximumAge: 10000, timeout: 20000 }
     );
   }
 
+  // Inicializa tudo
   (async function init() {
     await carregarUltimaLocalizacao();
     subscribeRealtime();
