@@ -138,25 +138,36 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-     <script>
-  // CONFIGURAÇÕES SUPABASE
+    <script>
+  // ===============================
+  // 🔧 CONFIGURAÇÕES SUPABASE
+  // ===============================
   const SUPABASE_URL = "https://ckjxfvnojwfwxazajeae.supabase.co";
   const SUPABASE_ANON_KEY =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNranhmdm5vandmd3hhemFqZWFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NDA4NjQsImV4cCI6MjA3ODExNjg2NH0.K21N_9PaJBt3tr2su7ouUQ57xmrjz9dW_Iy2ohYWqp0";
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  let mapa = null, marcador = null, primeiraLocalizacao = true;
+  // ===============================
+  // 🌍 VARIÁVEIS GLOBAIS
+  // ===============================
+  let mapa = null;
+  let marcador = null;
+  let primeiraLocalizacao = true;
+  let ultimaCoordenada = null;
 
-  // Cria o mapa
+  // ===============================
+  // 🗺️ CRIAR MAPA
+  // ===============================
   function criarMapa(lat, lon) {
     mapa = L.map("map").setView([lat, lon], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
     }).addTo(mapa);
+
     marcador = L.marker([lat, lon]).addTo(mapa);
 
-    // Botão 📍 Centralizar
+    // Botão de centralizar
     const btnCentralizar = L.control({ position: "bottomright" });
     btnCentralizar.onAdd = function () {
       const div = L.DomUtil.create("button", "centralizar-btn");
@@ -167,25 +178,30 @@
     btnCentralizar.addTo(mapa);
   }
 
-  // Atualiza o mapa com nova posição
+  // ===============================
+  // 📍 ATUALIZAR MAPA
+  // ===============================
   function atualizarMapa(lat, lon) {
     if (!mapa) return;
     marcador.setLatLng([lat, lon]);
     mapa.setView([lat, lon]);
   }
 
-  // Atualiza dados na interface
-  function atualizarInformacoes(lat, lon, timestamp, endereco = "Buscando endereço...") {
+  // ===============================
+  // 💬 ATUALIZAR INFORMAÇÕES NA TELA
+  // ===============================
+  function atualizarInformacoes(lat, lon, timestamp) {
     document.getElementById("lat").textContent = lat.toFixed(6);
     document.getElementById("lon").textContent = lon.toFixed(6);
     document.getElementById("timestamp").textContent = new Date(timestamp).toLocaleString();
-    document.getElementById("endereco").textContent = endereco;
     const status = document.getElementById("status");
-    status.textContent = "✅ Localização atualizada";
+    status.textContent = `✅ Localização atualizada`;
     status.classList.remove("loading");
   }
 
-  // Envia coordenadas ao Supabase
+  // ===============================
+  // ☁️ ENVIAR PARA SUPABASE (sem endereço)
+  // ===============================
   async function enviarParaSupabase(lat, lon, timestamp) {
     const { error } = await supabase.from("localizacoes").insert([
       {
@@ -195,24 +211,14 @@
         atualizado_em: timestamp,
       },
     ]);
+
     if (error) console.error("Erro Supabase:", error);
+    else console.log("Enviado:", lat, lon);
   }
 
-  // Busca endereço aproximado usando API do OpenStreetMap
-  async function buscarEndereco(lat, lon) {
-    try {
-      const resp = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`
-      );
-      const data = await resp.json();
-      return data.display_name || "Endereço não encontrado";
-    } catch (err) {
-      console.error("Erro ao buscar endereço:", err);
-      return "Erro ao obter endereço";
-    }
-  }
-
-  // Busca última localização salva
+  // ===============================
+  // ☁️ CARREGAR ÚLTIMA LOCALIZAÇÃO
+  // ===============================
   async function carregarUltimaLocalizacao() {
     const { data, error } = await supabase
       .from("localizacoes")
@@ -224,31 +230,33 @@
     if (data.length > 0) {
       const loc = data[0];
       if (!mapa) criarMapa(loc.latitude, loc.longitude);
-      const endereco = await buscarEndereco(loc.latitude, loc.longitude);
       atualizarMapa(loc.latitude, loc.longitude);
-      atualizarInformacoes(loc.latitude, loc.longitude, loc.atualizado_em, endereco);
+      atualizarInformacoes(loc.latitude, loc.longitude, loc.atualizado_em);
     }
   }
 
-  // Atualização em tempo real via Supabase
+  // ===============================
+  // 🔄 INSCRIÇÃO EM TEMPO REAL
+  // ===============================
   function subscribeRealtime() {
     supabase
       .channel("localizacoes-changes")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "localizacoes" },
-        async (payload) => {
+        (payload) => {
           const row = payload.new;
-          const endereco = await buscarEndereco(row.latitude, row.longitude);
           if (!mapa) criarMapa(row.latitude, row.longitude);
           atualizarMapa(row.latitude, row.longitude);
-          atualizarInformacoes(row.latitude, row.longitude, row.atualizado_em, endereco);
+          atualizarInformacoes(row.latitude, row.longitude, row.atualizado_em);
         }
       )
       .subscribe();
   }
 
-  // Rastreia a localização do dispositivo
+  // ===============================
+  // 📡 RASTREAMENTO HÍBRIDO (GPS + tempo)
+  // ===============================
   function rastrearLocalizacao() {
     if (!navigator.geolocation) {
       document.getElementById("status").textContent =
@@ -256,11 +264,13 @@
       return;
     }
 
+    // GPS ativo
     navigator.geolocation.watchPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
         const timestamp = new Date().toISOString();
+        ultimaCoordenada = { lat, lon };
 
         if (primeiraLocalizacao) {
           criarMapa(lat, lon);
@@ -269,8 +279,7 @@
           atualizarMapa(lat, lon);
         }
 
-        const endereco = await buscarEndereco(lat, lon);
-        atualizarInformacoes(lat, lon, timestamp, endereco);
+        atualizarInformacoes(lat, lon, timestamp);
         await enviarParaSupabase(lat, lon, timestamp);
       },
       (err) => {
@@ -278,9 +287,21 @@
       },
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
     );
+
+    // Atualização garantida a cada 15 segundos
+    setInterval(async () => {
+      if (ultimaCoordenada) {
+        const { lat, lon } = ultimaCoordenada;
+        const timestamp = new Date().toISOString();
+        atualizarInformacoes(lat, lon, timestamp);
+        await enviarParaSupabase(lat, lon, timestamp);
+      }
+    }, 15000);
   }
 
-  // Inicialização
+  // ===============================
+  // 🚀 INICIALIZAÇÃO
+  // ===============================
   (async function init() {
     await carregarUltimaLocalizacao();
     subscribeRealtime();
