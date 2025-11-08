@@ -137,7 +137,7 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
- <script>
+<script>
   // CONFIGURAÇÕES SUPABASE
   const SUPABASE_URL = "https://ckjxfvnojwfwxazajeae.supabase.co";
   const SUPABASE_ANON_KEY =
@@ -145,11 +145,18 @@
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+  // 🔹 Cada cliente recebe um identificador único
+  let dispositivoId = localStorage.getItem("dispositivo_id");
+  if (!dispositivoId) {
+    dispositivoId = crypto.randomUUID();
+    localStorage.setItem("dispositivo_id", dispositivoId);
+  }
+
   let mapa = null,
       marcador = null,
       primeiraLocalizacao = true;
 
-  // Função para criar o mapa
+  // Cria o mapa
   function criarMapa(lat, lon) {
     mapa = L.map("map").setView([lat, lon], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -157,7 +164,7 @@
     }).addTo(mapa);
     marcador = L.marker([lat, lon]).addTo(mapa);
 
-    // Botão de centralizar 📍
+    // Botão para centralizar 📍
     const btnCentralizar = L.control({ position: "bottomright" });
     btnCentralizar.onAdd = function () {
       const div = L.DomUtil.create("button", "centralizar-btn");
@@ -168,14 +175,14 @@
     btnCentralizar.addTo(mapa);
   }
 
-  // Atualiza posição no mapa
+  // Atualiza posição
   function atualizarMapa(lat, lon) {
     if (!mapa) return;
     marcador.setLatLng([lat, lon]);
     mapa.setView([lat, lon]);
   }
 
-  // Busca nome do local com base nas coordenadas
+  // Busca nome do local
   async function obterEndereco(lat, lon) {
     try {
       const resp = await fetch(
@@ -189,7 +196,7 @@
     }
   }
 
-  // Atualiza informações na interface
+  // Atualiza interface
   async function atualizarInformacoes(lat, lon, timestamp) {
     const endereco = await obterEndereco(lat, lon);
 
@@ -211,11 +218,11 @@
     status.classList.remove("loading");
   }
 
-  // Envia somente coordenadas para Supabase
+  // Envia somente coordenadas
   async function enviarParaSupabase(lat, lon, timestamp) {
     const { error } = await supabase.from("localizacoes").insert([
       {
-        dispositivo: "cliente",
+        dispositivo: dispositivoId, // 🔹 cada cliente tem seu próprio ID
         latitude: lat,
         longitude: lon,
         atualizado_em: timestamp,
@@ -224,11 +231,12 @@
     if (error) console.error("Erro Supabase:", error);
   }
 
-  // Carrega a última localização
+  // Carrega última localização do próprio dispositivo
   async function carregarUltimaLocalizacao() {
     const { data, error } = await supabase
       .from("localizacoes")
       .select("*")
+      .eq("dispositivo", dispositivoId)
       .order("atualizado_em", { ascending: false })
       .limit(1);
 
@@ -241,13 +249,18 @@
     }
   }
 
-  // Escuta atualizações em tempo real
+  // Escuta atualizações do próprio dispositivo
   function subscribeRealtime() {
     supabase
       .channel("localizacoes-changes")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "localizacoes" },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "localizacoes",
+          filter: `dispositivo=eq.${dispositivoId}`,
+        },
         (payload) => {
           const row = payload.new;
           if (!mapa) criarMapa(row.latitude, row.longitude);
@@ -258,7 +271,7 @@
       .subscribe();
   }
 
-  // Rastreia posição do cliente
+  // Inicia rastreamento
   function rastrearLocalizacao() {
     if (!navigator.geolocation) {
       document.getElementById("status").textContent =
@@ -296,4 +309,3 @@
     rastrearLocalizacao();
   })();
 </script>
-
