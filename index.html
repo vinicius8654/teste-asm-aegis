@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Rastreador de dispositivo - ASM AEGIS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+
+    <style>
+      :root {
+        --cor-fundo: #1e293b;
+        --cor-texto: #ffffff;
+        --cor-primaria: #ffffff;
+        --cor-secundaria: #334155;
+        --sombra: rgba(255, 255, 255, 0.08);
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Segoe UI", sans-serif;
+        background-color: var(--cor-fundo);
+        color: var(--cor-texto);
+        padding: 20px;
+        position: relative;
+        min-height: 100vh;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .imgico {
+        width: 30px;
+      }
+      h1 {
+        font-size: 1.8rem;
+      }
+      .rastreador-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        gap: 20px;
+        margin-top: 40px;
+      }
+      .mapa,
+      .info {
+        background-color: var(--cor-secundaria);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 12px var(--sombra);
+      }
+      .mapa {
+        height: 450px;
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+        border-radius: 10px;
+      }
+      .info h2 {
+        font-size: 3.3rem;
+        margin-bottom: 15px;
+      }
+      .info p {
+        margin: 10px 0;
+      }
+      #status.loading {
+        animation: pulse 1.5s infinite;
+      }
+      /* Botão de centralizar no mapa */
+      .centralizar-btn {
+        background: var(--cor-fundo);
+        color: rgb(255, 255, 255);
+        border: none;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        transition: filter 0.2s ease;
+      }
+      .centralizar-btn:hover {
+        filter: brightness(1.2);
+      }
+
+      @keyframes pulse {
+        0% {
+          opacity: 0.5;
+        }
+        50% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0.5;
+        }
+        
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <img class="imgico" src="logo-_3_.ico" alt="Logo AEGIS" />
+      <h1>RASTREADOR AEGIS</h1>
+    </header>
+
+    <div class="rastreador-container">
+      <div class="mapa">
+        <div id="map"></div>
+      </div>
+
+      <div class="info">
+        <h2>Informações do Dispositivo</h2>
+        <p><strong>Latitude:</strong> <span id="lat">Carregando...</span></p>
+        <p><strong>Longitude:</strong> <span id="lon">Carregando...</span></p>
+        <p>
+          <strong>Última atualização:</strong>
+          <span id="timestamp">---</span>
+        </p>
+        <p>
+          <strong>Status:</strong>
+          <span id="status" class="loading">🔄 Aguardando localização...</span>
+        </p>
+      </div>
+    </div>
+
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+  // CONFIGURAÇÕES SUPABASE
+  const SUPABASE_URL = "https://ckjxfvnojwfwxazajeae.supabase.co";
+  const SUPABASE_ANON_KEY =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNranhmdm5vandmd3hhemFqZWFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI1NDA4NjQsImV4cCI6MjA3ODExNjg2NH0.K21N_9PaJBt3tr2su7ouUQ57xmrjz9dW_Iy2ohYWqp0";
+
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let mapa = null, marcador = null, primeiraLocalizacao = true;
+
+  // cria mapa somente na primeira vez
+  function criarMapa(lat, lon) {
+    mapa = L.map("map").setView([lat, lon], 15);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+    }).addTo(mapa);
+    marcador = L.marker([lat, lon]).addTo(mapa);
+
+    // botão 📍 centralizar
+    const btnCentralizar = L.control({ position: "bottomright" });
+    btnCentralizar.onAdd = function () {
+      const div = L.DomUtil.create("button", "centralizar-btn");
+      div.textContent = "📍 Centralizar";
+      div.onclick = () => mapa.setView(marcador.getLatLng(), 15);
+      return div;
+    };
+    btnCentralizar.addTo(mapa);
+  }
+
+  function atualizarMapa(lat, lon) {
+    if (!mapa) return;
+    marcador.setLatLng([lat, lon]);
+    mapa.setView([lat, lon]);
+  }
+
+  function atualizarInformacoes(lat, lon, timestamp) {
+    document.getElementById("lat").textContent = lat.toFixed(6);
+    document.getElementById("lon").textContent = lon.toFixed(6);
+    document.getElementById("timestamp").textContent = new Date(timestamp).toLocaleString();
+    const status = document.getElementById("status");
+    status.textContent = "✅ Localização atualizada";
+    status.classList.remove("loading");
+  }
+
+  async function enviarParaSupabase(lat, lon, timestamp) {
+    const { error } = await supabase.from("localizacoes").insert([
+      {
+        dispositivo: "celular_pessoal",
+        latitude: lat,
+        longitude: lon,
+        atualizado_em: timestamp,
+      },
+    ]);
+    if (error) console.error("Erro Supabase:", error);
+  }
+
+  async function carregarUltimaLocalizacao() {
+    const { data, error } = await supabase
+      .from("localizacoes")
+      .select("*")
+      .order("atualizado_em", { ascending: false })
+      .limit(1);
+
+    if (error) return console.error("Erro ao buscar:", error);
+    if (data.length > 0) {
+      const loc = data[0];
+      if (!mapa) criarMapa(loc.latitude, loc.longitude);
+      atualizarMapa(loc.latitude, loc.longitude);
+      atualizarInformacoes(loc.latitude, loc.longitude, loc.atualizado_em);
+    }
+  }
+
+  function subscribeRealtime() {
+    supabase
+      .channel("localizacoes-changes")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "localizacoes" },
+        (payload) => {
+          const row = payload.new;
+          if (!mapa) criarMapa(row.latitude, row.longitude);
+          atualizarMapa(row.latitude, row.longitude);
+          atualizarInformacoes(row.latitude, row.longitude, row.atualizado_em);
+        }
+      )
+      .subscribe();
+  }
+
+  function rastrearLocalizacao() {
+    if (!navigator.geolocation) {
+      document.getElementById("status").textContent =
+        "⚠️ Geolocalização não suportada.";
+      return;
+    }
+
+    navigator.geolocation.watchPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        const timestamp = new Date().toISOString();
+
+        if (primeiraLocalizacao) {
+          criarMapa(lat, lon);
+          primeiraLocalizacao = false;
+        } else {
+          atualizarMapa(lat, lon);
+        }
+
+        atualizarInformacoes(lat, lon, timestamp);
+        await enviarParaSupabase(lat, lon, timestamp);
+      },
+      (err) => {
+        document.getElementById("status").textContent = "❌ Erro: " + err.message;
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+    );
+  }
+
+  (async function init() {
+    await carregarUltimaLocalizacao();
+    subscribeRealtime();
+    rastrearLocalizacao();
+  })();
+</script>
