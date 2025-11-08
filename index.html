@@ -145,18 +145,16 @@
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // 🔹 Cada cliente recebe um identificador único
+  // Cada cliente tem um identificador único persistente
   let dispositivoId = localStorage.getItem("dispositivo_id");
   if (!dispositivoId) {
     dispositivoId = crypto.randomUUID();
     localStorage.setItem("dispositivo_id", dispositivoId);
   }
 
-  let mapa = null,
-      marcador = null,
-      primeiraLocalizacao = true;
+  let mapa = null, marcador = null, primeiraLocalizacao = true;
 
-  // Cria o mapa
+  // Cria o mapa inicial
   function criarMapa(lat, lon) {
     mapa = L.map("map").setView([lat, lon], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -164,7 +162,7 @@
     }).addTo(mapa);
     marcador = L.marker([lat, lon]).addTo(mapa);
 
-    // Botão para centralizar 📍
+    // Botão de centralizar
     const btnCentralizar = L.control({ position: "bottomright" });
     btnCentralizar.onAdd = function () {
       const div = L.DomUtil.create("button", "centralizar-btn");
@@ -175,14 +173,13 @@
     btnCentralizar.addTo(mapa);
   }
 
-  // Atualiza posição
   function atualizarMapa(lat, lon) {
     if (!mapa) return;
     marcador.setLatLng([lat, lon]);
     mapa.setView([lat, lon]);
   }
 
-  // Busca nome do local
+  // Busca o nome do local (apenas para exibição)
   async function obterEndereco(lat, lon) {
     try {
       const resp = await fetch(
@@ -190,27 +187,26 @@
       );
       const data = await resp.json();
       return data.display_name || "Local não identificado";
-    } catch (e) {
-      console.error("Erro ao buscar endereço:", e);
+    } catch {
       return "Endereço indisponível";
     }
   }
 
-  // Atualiza interface
   async function atualizarInformacoes(lat, lon, timestamp) {
     const endereco = await obterEndereco(lat, lon);
 
     document.getElementById("lat").textContent = lat.toFixed(6);
     document.getElementById("lon").textContent = lon.toFixed(6);
-    document.getElementById("timestamp").textContent = new Date(timestamp).toLocaleString();
+    document.getElementById("timestamp").textContent =
+      new Date(timestamp).toLocaleString();
 
-    let localElement = document.getElementById("local");
-    if (!localElement) {
-      localElement = document.createElement("p");
-      localElement.innerHTML = `<strong>Local:</strong> <span id="local-nome">${endereco}</span>`;
-      document.querySelector(".info").appendChild(localElement);
+    let localNome = document.getElementById("local-nome");
+    if (!localNome) {
+      const p = document.createElement("p");
+      p.innerHTML = `<strong>Local:</strong> <span id="local-nome">${endereco}</span>`;
+      document.querySelector(".info").appendChild(p);
     } else {
-      document.getElementById("local-nome").textContent = endereco;
+      localNome.textContent = endereco;
     }
 
     const status = document.getElementById("status");
@@ -218,26 +214,25 @@
     status.classList.remove("loading");
   }
 
-  // Envia somente coordenadas
+  // Envia ou atualiza a localização no Supabase
   async function enviarParaSupabase(lat, lon, timestamp) {
-    const { error } = await supabase.from("localizacoes").insert([
+    const { error } = await supabase.from("localizacoes").upsert([
       {
-        dispositivo: dispositivoId, // 🔹 cada cliente tem seu próprio ID
+        dispositivo: dispositivoId,
         latitude: lat,
         longitude: lon,
         atualizado_em: timestamp,
       },
     ]);
-    if (error) console.error("Erro Supabase:", error);
+
+    if (error) console.error("Erro ao atualizar Supabase:", error);
   }
 
-  // Carrega última localização do próprio dispositivo
   async function carregarUltimaLocalizacao() {
     const { data, error } = await supabase
       .from("localizacoes")
       .select("*")
       .eq("dispositivo", dispositivoId)
-      .order("atualizado_em", { ascending: false })
       .limit(1);
 
     if (error) return console.error("Erro ao buscar:", error);
@@ -249,21 +244,19 @@
     }
   }
 
-  // Escuta atualizações do próprio dispositivo
   function subscribeRealtime() {
     supabase
       .channel("localizacoes-changes")
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "UPDATE",
           schema: "public",
           table: "localizacoes",
           filter: `dispositivo=eq.${dispositivoId}`,
         },
         (payload) => {
           const row = payload.new;
-          if (!mapa) criarMapa(row.latitude, row.longitude);
           atualizarMapa(row.latitude, row.longitude);
           atualizarInformacoes(row.latitude, row.longitude, row.atualizado_em);
         }
@@ -271,7 +264,6 @@
       .subscribe();
   }
 
-  // Inicia rastreamento
   function rastrearLocalizacao() {
     if (!navigator.geolocation) {
       document.getElementById("status").textContent =
@@ -302,7 +294,6 @@
     );
   }
 
-  // Inicializa tudo
   (async function init() {
     await carregarUltimaLocalizacao();
     subscribeRealtime();
